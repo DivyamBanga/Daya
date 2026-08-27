@@ -2,9 +2,12 @@ import { patchLog, toggleSel, useApp } from '../store'
 import { useCycles, useToday } from '../hooks'
 import { useNav } from '../nav'
 import { CycleWheel, ProgressRing } from '../components/CycleWheel'
+import { HormoneCurves } from '../components/HormoneCurves'
 import { IconBell, IconChev, IconPlus } from '../components/icons'
 import { dailyInsights } from '../logic/insights'
-import { pregnancyProgress } from '../logic/cycles'
+import { fmtPrediction, pregnancyProgress } from '../logic/cycles'
+import { PHASE_PLAN } from '../data/phasePlan'
+import { drspScore } from './Drsp'
 import { diffDays, fmtShort, fmtWeekdayLong } from '../logic/dates'
 import { QUICK_PICKS, optionLabel } from '../data/trackers'
 import { ARTICLES } from '../data/articles'
@@ -84,6 +87,10 @@ export default function Today() {
         <InsightCard key={ins.id} ins={ins} delay={0.16 + i * 0.06} />
       ))}
 
+      {settings.drsp && mode !== 'pregnancy' && <DrspCard />}
+      {mode !== 'pregnancy' && cycles.currentStart && !settings.mutePredictions && <HormoneCard />}
+      {mode !== 'pregnancy' && <PhasePlanCard />}
+
       <WaterCard />
       {settings.meds.length > 0 && <MedsCard />}
       {mode !== 'pregnancy' && cycles.nextPeriod && <UpcomingCard />}
@@ -119,9 +126,10 @@ function CycleHero() {
   const nav = useNav()
   const { settings } = useApp()
   const mode = settings.mode
+  const muted = !!settings.mutePredictions
 
   const inEpisode = cycles.episodes.find((e) => today >= e.start && today <= e.end)
-  const phaseMeta = PHASE_META[cycles.phase]
+  const phaseMeta = muted && !cycles.ovulationConfirmed && cycles.phase !== 'menstrual' ? undefined : PHASE_META[cycles.phase]
 
   let center: React.ReactNode
   if (!cycles.currentStart) {
@@ -171,11 +179,15 @@ function CycleHero() {
         <div className="label">Cycle day</div>
         <div className="bignum">{cycles.cycleDay ?? '—'}</div>
         <div className="sub">
-          {cycles.late > 0
-            ? `${cycles.late} day${cycles.late === 1 ? '' : 's'} late`
-            : cycles.daysToPeriod !== null
-              ? `Period in ${cycles.daysToPeriod} day${cycles.daysToPeriod === 1 ? '' : 's'}`
-              : ''}
+          {muted
+            ? ''
+            : cycles.late > cycles.rangeDays
+              ? `${cycles.late} day${cycles.late === 1 ? '' : 's'} late`
+              : cycles.nextPeriod && cycles.rangeDays > 0
+                ? `Period around ${fmtPrediction(cycles.nextPeriod, cycles.rangeDays, fmtShort)}`
+                : cycles.daysToPeriod !== null && cycles.daysToPeriod >= 0
+                  ? `Period in ${cycles.daysToPeriod} day${cycles.daysToPeriod === 1 ? '' : 's'}`
+                  : ''}
         </div>
       </>
     )
@@ -183,13 +195,18 @@ function CycleHero() {
 
   return (
     <div className="hero rise center">
-      <CycleWheel cycles={cycles} today={today} center={center} />
+      <CycleWheel cycles={cycles} today={today} center={center} muted={muted} />
       <div className="flex" style={{ justifyContent: 'center', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
         {phaseMeta && <span className={`pill ${phaseMeta.cls}`}>{phaseMeta.label}</span>}
-        {cycles.nextPeriod && (
-          <span className="pill rose">Next period · {fmtShort(cycles.nextPeriod)}</span>
+        {cycles.ovulationConfirmed && <span className="pill teal">🎯 Ovulation confirmed</span>}
+        {!muted && cycles.nextPeriod && (
+          <span className="pill rose">
+            Next period · {fmtPrediction(cycles.nextPeriod, cycles.rangeDays, fmtShort)}
+          </span>
         )}
-        {cycles.irregular && <span className="pill gold">Irregular · wider margin</span>}
+        {cycles.irregular && (
+          <span className="pill gold">{muted ? 'Predictions off' : 'Irregular · wider margin'}</span>
+        )}
       </div>
       {cycles.currentStart && (
         <button
@@ -288,6 +305,99 @@ function InsightCard({ ins, delay }: { ins: Insight; delay: number }) {
   )
 }
 
+function DrspCard() {
+  const data = useApp()
+  const today = useToday()
+  const nav = useNav()
+  const rec = data.logs[today]?.drsp
+  const score = drspScore(rec)
+  const answered = rec ? Object.keys(rec).length : 0
+  return (
+    <button
+      className="card card-press rise"
+      style={{ marginTop: 12, width: '100%', textAlign: 'left', animationDelay: '0.26s' }}
+      onClick={() => nav.push({ kind: 'drsp' })}
+    >
+      <div className="flex">
+        <span className="rowicon">🌗</span>
+        <span className="grow">
+          <span style={{ fontWeight: 700 }}>Daily record (DRSP)</span>
+          <span className="sub" style={{ display: 'block', fontSize: 13 }}>
+            {answered === 0
+              ? 'Not filled yet today — 30 seconds'
+              : score !== null
+                ? `Done · score ${score}`
+                : `${answered} answered — finish when you can`}
+          </span>
+        </span>
+        <IconChev size={17} />
+      </div>
+    </button>
+  )
+}
+
+function HormoneCard() {
+  const cycles = useCycles()
+  const { settings } = useApp()
+  const nav = useNav()
+  if (!cycles.currentStart || !cycles.ovulation) return null
+  const ovuDay = diffDays(cycles.currentStart, cycles.ovulation) + 1
+  return (
+    <button
+      className="card card-press rise"
+      style={{ marginTop: 12, width: '100%', textAlign: 'left', animationDelay: '0.3s' }}
+      onClick={() => nav.push({ kind: 'charts', tab: 'hormones' })}
+    >
+      <div className="flex" style={{ marginBottom: 6 }}>
+        <h3 className="h3 grow">Your hormones</h3>
+        <span className="meta">tap for detail</span>
+      </div>
+      <HormoneCurves
+        cycleLen={Math.max(cycles.avgCycle, cycles.cycleDay ?? 0)}
+        ovulationDay={ovuDay}
+        today={cycles.cycleDay}
+        periodLen={Math.min(cycles.avgPeriod, settings.periodLen + 3)}
+        compact
+      />
+    </button>
+  )
+}
+
+function PhasePlanCard() {
+  const cycles = useCycles()
+  const { settings } = useApp()
+  const group =
+    cycles.phase === 'menstrual'
+      ? 'menstrual'
+      : cycles.phase === 'follicular'
+        ? 'follicular'
+        : cycles.phase === 'fertile' || cycles.phase === 'ovulation'
+          ? 'fertile'
+          : cycles.phase === 'luteal'
+            ? 'luteal'
+            : null
+  if (!group) return null
+  if (settings.mutePredictions && group !== 'menstrual' && !cycles.ovulationConfirmed) return null
+  const plan = PHASE_PLAN[group]
+  return (
+    <div className="card rise" style={{ marginTop: 12, animationDelay: '0.34s' }}>
+      <div className="flex" style={{ marginBottom: 8 }}>
+        <span className="rowicon">{plan.emoji}</span>
+        <h3 className="h3 grow">Today’s phase plan</h3>
+      </div>
+      <p className="sub" style={{ fontSize: 13.5, marginBottom: 8 }}>
+        <b>Move:</b> {plan.move}
+      </p>
+      <p className="sub" style={{ fontSize: 13.5 }}>
+        <b>Eat:</b> {plan.food}
+      </p>
+      <p className="meta" style={{ marginTop: 8 }}>
+        Gentle defaults, not rules — cycle-syncing evidence is limited.
+      </p>
+    </div>
+  )
+}
+
 function WaterCard() {
   const data = useApp()
   const today = useToday()
@@ -364,6 +474,8 @@ function MedsCard() {
 function UpcomingCard() {
   const cycles = useCycles()
   const today = useToday()
+  const { settings } = useApp()
+  if (settings.mutePredictions) return null
   const rows: { emoji: string; label: string; date: string; inDays: number }[] = []
   if (cycles.nextPeriod)
     rows.push({ emoji: '🌹', label: 'Next period', date: cycles.nextPeriod, inDays: diffDays(today, cycles.nextPeriod) })

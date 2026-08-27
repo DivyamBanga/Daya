@@ -1,9 +1,11 @@
-import { patchLog, toggleSel, useApp } from '../store'
+import { cyclePain, cycleSev, patchLog, toggleSel, useApp } from '../store'
 import { useToday } from '../hooks'
+import { useNav } from '../nav'
 import { Sheet, SectionLabel, Stepper } from '../components/ui'
 import { IconBack, IconChev } from '../components/icons'
+import { BodyMap } from '../components/BodyMap'
 import { addDays, fmtWeekdayLong } from '../logic/dates'
-import { categoriesForMode, FLOW_LEVELS } from '../data/trackers'
+import { categoriesForMode, FLOW_LEVELS, SEV_CATS } from '../data/trackers'
 import { cToF, fToC, kgToLb, lbToKg } from '../logic/units'
 import type { DateKey, FlowLevel } from '../types'
 
@@ -80,26 +82,48 @@ export default function LogSheet({
         </>
       )}
 
-      {categoriesForMode(settings.mode).map((cat) => (
-        <div key={cat.id}>
-          <SectionLabel>{cat.label}</SectionLabel>
-          <div className="chiprow">
-            {cat.options.map((o) => {
-              const on = log.sel?.[cat.id]?.includes(o.id) ?? false
-              return (
-                <button
-                  key={o.id}
-                  className={`chip${on ? ' on' : ''}`}
-                  onClick={() => toggleSel(date, cat.id, o.id, cat.single)}
-                >
-                  <span className="em">{o.emoji}</span>
-                  {o.label}
-                </button>
-              )
-            })}
+      {categoriesForMode(settings.mode).map((cat) => {
+        const sevCat = SEV_CATS.has(cat.id)
+        return (
+          <div key={cat.id}>
+            <SectionLabel>
+              {cat.label}
+              {sevCat && (
+                <span style={{ fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+                  {' '}
+                  · tap again for severity
+                </span>
+              )}
+            </SectionLabel>
+            <div className="chiprow">
+              {cat.options.map((o) => {
+                const on = log.sel?.[cat.id]?.includes(o.id) ?? false
+                const sev = on ? (log.sev?.[`${cat.id}:${o.id}`] ?? 1) : 0
+                return (
+                  <button
+                    key={o.id}
+                    className={`chip${on ? (sevCat ? ` s${sev}` : ' on') : ''}`}
+                    onClick={() =>
+                      sevCat ? cycleSev(date, cat.id, o.id) : toggleSel(date, cat.id, o.id, cat.single)
+                    }
+                  >
+                    <span className="em">{o.emoji}</span>
+                    {o.label}
+                    {sevCat && on && <span className="sevdots">{'●'.repeat(sev)}</span>}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
+
+      <SectionLabel>Pain map · tap zones to rate</SectionLabel>
+      <div className="card" style={{ padding: 10 }}>
+        <BodyMap pain={log.pain ?? {}} onTap={(region) => cyclePain(date, region)} />
+      </div>
+
+      <CustomSection date={date} />
 
       <SectionLabel>Water</SectionLabel>
       <div className="flex">
@@ -142,6 +166,30 @@ export default function LogSheet({
         onChange={(v) => patchLog(date, { sleep: v || undefined })}
         fmt={(v) => `${v} h`}
       />
+
+      {(settings.mode === 'cycle' || settings.mode === 'ttc') && (
+        <>
+          <SectionLabel>LH test line darkness</SectionLabel>
+          <div className="card" style={{ padding: '12px 16px' }}>
+            <div className="flex">
+              <input
+                type="range"
+                min={0}
+                max={10}
+                step={1}
+                value={log.lh ?? 0}
+                onChange={(e) => patchLog(date, { lh: Number(e.target.value) || undefined })}
+              />
+              <span className="serif" style={{ fontSize: 22, fontWeight: 600, minWidth: 34, textAlign: 'right' }}>
+                {log.lh ?? '—'}
+              </span>
+            </div>
+            <p className="meta" style={{ marginTop: 6 }}>
+              0 = no line · 10 = darker than control. A rising-then-falling peak pinpoints ovulation.
+            </p>
+          </div>
+        </>
+      )}
 
       {settings.mode !== 'pregnancy' && (
         <>
@@ -210,6 +258,45 @@ export default function LogSheet({
         Done
       </button>
     </Sheet>
+  )
+}
+
+function CustomSection({ date }: { date: DateKey }) {
+  const data = useApp()
+  const nav = useNav()
+  const log = data.logs[date] ?? {}
+  const customs = data.settings.customTrackers
+  return (
+    <div>
+      <SectionLabel>
+        Your trackers{' '}
+        <button
+          className="meta"
+          style={{ color: 'var(--rose-deep)', textTransform: 'none', letterSpacing: 0, fontWeight: 700 }}
+          onClick={() => nav.push({ kind: 'custom' })}
+        >
+          {customs.length ? 'Edit' : '＋ Create'}
+        </button>
+      </SectionLabel>
+      {customs.length === 0 ? (
+        <p className="notice">
+          Track anything Daya didn’t predefine — a specific medication, therapy days, migraine
+          triggers. Custom trackers feed the same pattern detection as everything else.
+        </p>
+      ) : (
+        <div className="chiprow">
+          {customs.map((t) => {
+            const on = log.sel?.custom?.includes(t.id) ?? false
+            return (
+              <button key={t.id} className={`chip${on ? ' on' : ''}`} onClick={() => toggleSel(date, 'custom', t.id)}>
+                <span className="em">{t.emoji}</span>
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 

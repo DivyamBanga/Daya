@@ -9,6 +9,8 @@ import { CheckerView } from './Checker'
 import { DataView, RemindersView } from './DataTools'
 import { MedsView } from './Meds'
 import { ContractionsView, KicksView, WeeksView } from './PregnancyTools'
+import { CustomTrackersView } from './CustomTrackers'
+import { DrspView } from './Drsp'
 import type { DateKey } from '../types'
 
 export default function OverlayHost({ overlay }: { overlay: Overlay }) {
@@ -23,7 +25,7 @@ export default function OverlayHost({ overlay }: { overlay: Overlay }) {
     case 'assistant':
       return <AssistantView />
     case 'charts':
-      return <ChartsView />
+      return <ChartsView initialTab={overlay.tab} />
     case 'report':
       return <ReportView />
     case 'cycles':
@@ -42,6 +44,10 @@ export default function OverlayHost({ overlay }: { overlay: Overlay }) {
       return <KicksView />
     case 'contractions':
       return <ContractionsView />
+    case 'custom':
+      return <CustomTrackersView />
+    case 'drsp':
+      return <DrspView />
   }
 }
 

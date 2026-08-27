@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeCycles, findEpisodes, pregnancyProgress } from './cycles'
+import { computeCycles, findEpisodes, fmtPrediction, pregnancyProgress } from './cycles'
 import { EMPTY_DATA, type AppData } from '../types'
 import { addDays } from './dates'
 
@@ -103,6 +103,58 @@ describe('dayInfo', () => {
     const c = computeCycles(data, '2026-02-10')
     expect(c.dayInfo('2026-02-26').predictedPeriod).toBe(true)
     expect(c.dayInfo('2026-02-20').predictedPeriod).toBe(false)
+  })
+})
+
+describe('anchored ovulation', () => {
+  it('re-anchors the current cycle to a positive OPK', () => {
+    const data = withPeriods(['2026-01-01'])
+    data.logs['2026-01-12'] = { ...(data.logs['2026-01-12'] ?? {}), sel: { opk: ['positive'] } }
+    const c = computeCycles(data, '2026-01-14')
+    expect(c.ovulationConfirmed).toBe('opk')
+    expect(c.ovulation).toBe('2026-01-13')
+    expect(c.fertileStart).toBe('2026-01-08')
+    expect(c.fertileEnd).toBe('2026-01-14')
+    expect(c.nextPeriod).toBe('2026-01-27') // ovulation + default luteal 14
+  })
+
+  it('detects ovulation from a BBT shift and prefers it over OPK', () => {
+    const data = withPeriods(['2026-03-01'])
+    for (let i = 0; i < 6; i++) data.logs[addDays('2026-03-01', i)] = { ...(data.logs[addDays('2026-03-01', i)] ?? {}), bbt: 36.4 }
+    for (let i = 6; i < 9; i++) data.logs[addDays('2026-03-01', i)] = { bbt: 36.7 }
+    data.logs['2026-03-12'] = { sel: { opk: ['positive'] } }
+    const c = computeCycles(data, '2026-03-10')
+    expect(c.ovulationConfirmed).toBe('bbt')
+    expect(c.ovulation).toBe('2026-03-06') // day before the sustained rise
+    expect(c.nextPeriod).toBe('2026-03-20')
+  })
+
+  it('learns the personal luteal length from anchored completed cycles', () => {
+    const data = withPeriods(['2026-01-01', '2026-01-27', '2026-02-22'])
+    // OPK positives → ovulation day 16 of each completed cycle → luteal 11
+    data.logs['2026-01-15'] = { ...(data.logs['2026-01-15'] ?? {}), sel: { opk: ['positive'] } }
+    data.logs['2026-02-10'] = { ...(data.logs['2026-02-10'] ?? {}), sel: { opk: ['positive'] } }
+    const c = computeCycles(data, '2026-03-01')
+    expect(c.lutealLearned).toBe(true)
+    expect(c.luteal).toBe(11)
+    // predictions now use the learned luteal: next period 02-22+26, ovulation = that - 11
+    expect(c.nextPeriod).toBe('2026-03-20')
+    expect(c.ovulation).toBe('2026-03-09')
+  })
+
+  it('shows an honest range for irregular cycles, none once anchored', () => {
+    const data = withPeriods(['2026-01-01', '2026-01-25', '2026-02-27', '2026-03-25', '2026-05-02'])
+    const c = computeCycles(data, '2026-05-06')
+    expect(c.rangeDays).toBe(5) // variability 14 → capped at ±5
+    data.logs['2026-05-14'] = { sel: { opk: ['positive'] } }
+    const c2 = computeCycles(data, '2026-05-16')
+    expect(c2.rangeDays).toBe(0)
+    expect(c2.ovulationConfirmed).toBe('opk')
+  })
+
+  it('formats predictions as a range when uncertain', () => {
+    expect(fmtPrediction('2026-09-04', 0, (k) => k)).toBe('2026-09-04')
+    expect(fmtPrediction('2026-09-04', 2, (k) => k)).toBe('2026-09-02 – 2026-09-06')
   })
 })
 

@@ -202,6 +202,7 @@ export function BBTChart({
   periodThrough,
   ovulationDay,
   fmt,
+  prevData,
 }: {
   /** One entry per cycle day; value NaN when not measured. */
   data: { day: number; value: number }[]
@@ -210,28 +211,36 @@ export function BBTChart({
   periodThrough?: number
   ovulationDay?: number
   fmt: (v: number) => string
+  /** Previous cycle's temps for overlay comparison (drawn faded, aligned by cycle day). */
+  prevData?: { day: number; value: number }[]
 }) {
   const [active, setActive] = useState<number | null>(null)
   const measured = data.filter((d) => !isNaN(d.value))
   if (measured.length < 3)
     return <p className="notice">Log basal temperature on 3+ mornings to draw your curve.</p>
-  const values = measured.map((d) => d.value)
+  const prevMeasured = (prevData ?? []).filter((d) => !isNaN(d.value))
+  const values = measured.map((d) => d.value).concat(prevMeasured.map((d) => d.value))
   const lo = Math.min(...values) - 0.15
   const hi = Math.max(...values) + 0.15
   const maxDay = Math.max(...data.map((d) => d.day), 28)
   const x = (day: number) => PAD.l + (PW / maxDay) * (day - 0.5)
   const y = (v: number) => PAD.t + PH - ((v - lo) / (hi - lo)) * PH
 
-  let path = ''
-  let pen = false
-  for (const d of data) {
-    if (isNaN(d.value)) {
-      pen = false
-      continue
+  const tracePath = (pts: { day: number; value: number }[]) => {
+    let p = ''
+    let pen = false
+    for (const d of pts) {
+      if (isNaN(d.value)) {
+        pen = false
+        continue
+      }
+      p += `${pen ? 'L' : 'M'} ${x(d.day).toFixed(1)} ${y(d.value).toFixed(1)} `
+      pen = true
     }
-    path += `${pen ? 'L' : 'M'} ${x(d.day).toFixed(1)} ${y(d.value).toFixed(1)} `
-    pen = true
+    return p
   }
+  const path = tracePath(data)
+  const prevPath = prevData ? tracePath(prevData) : ''
   const a = active !== null ? measured.find((m) => m.day === active) : null
 
   return (
@@ -256,6 +265,9 @@ export function BBTChart({
               est. ovulation
             </text>
           </g>
+        )}
+        {prevPath && (
+          <path d={prevPath} fill="none" stroke="var(--ink-3)" strokeOpacity="0.55" strokeWidth="1.6" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" />
         )}
         <path d={path} fill="none" stroke="var(--ch-rose)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {measured.map((d) => (

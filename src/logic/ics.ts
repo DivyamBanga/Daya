@@ -19,17 +19,39 @@ function alarm(trigger: string, text: string): string[] {
  * even while Daya (a web app) is closed.
  */
 export function buildIcs(cycles: CycleInfo, settings: Settings, todayKey: string): string {
+  const discreet = !!settings.discreetExport
   const L: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Daya//Cycle Companion//EN',
     'CALSCALE:GREGORIAN',
-    'X-WR-CALNAME:Daya',
+    `X-WR-CALNAME:${discreet ? 'Personal' : 'Daya'}`,
   ]
   const stamp = `${d8(todayKey)}T000000Z`
   const r = settings.reminders
 
-  cycles.predictions.slice(0, 6).forEach((p) => {
+  const T = discreet
+    ? {
+        period: 'Self-care days',
+        periodDesc: 'A personal reminder.',
+        before: 'Heads-up: 2 days',
+        eve: 'Heads-up: tomorrow',
+        fertile: 'High-energy days',
+        ovul: 'Peak day',
+        ovulAlarm: 'Peak day today',
+      }
+    : {
+        period: '🌹 Period (predicted)',
+        periodDesc: 'Daya prediction — an estimate\\, not a certainty.',
+        before: 'Period expected in 2 days',
+        eve: 'Period expected tomorrow — maybe pack supplies',
+        fertile: '🌊 Fertile window (predicted)',
+        ovul: '🌟 Estimated ovulation',
+        ovulAlarm: 'Estimated ovulation today',
+      }
+
+  const predictive = settings.mutePredictions ? [] : cycles.predictions.slice(0, 6)
+  predictive.forEach((p) => {
     // Period (all-day span)
     L.push(
       'BEGIN:VEVENT',
@@ -37,11 +59,11 @@ export function buildIcs(cycles: CycleInfo, settings: Settings, todayKey: string
       `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${d8(p.periodStart)}`,
       `DTEND;VALUE=DATE:${d8(addDate(p.periodEnd, 1))}`,
-      'SUMMARY:🌹 Period (predicted)',
-      'DESCRIPTION:Daya prediction — an estimate\\, not a certainty.',
+      `SUMMARY:${T.period}`,
+      `DESCRIPTION:${T.periodDesc}`,
     )
-    if (r.periodBefore) L.push(...alarm('-P2D', 'Period expected in 2 days'))
-    if (r.periodStart) L.push(...alarm('-PT15H', 'Period expected tomorrow — maybe pack supplies'))
+    if (r.periodBefore) L.push(...alarm('-P2D', T.before))
+    if (r.periodStart) L.push(...alarm('-PT15H', T.eve))
     L.push('END:VEVENT')
 
     // Fertile window
@@ -52,15 +74,15 @@ export function buildIcs(cycles: CycleInfo, settings: Settings, todayKey: string
         `DTSTAMP:${stamp}`,
         `DTSTART;VALUE=DATE:${d8(p.fertileStart)}`,
         `DTEND;VALUE=DATE:${d8(addDate(p.fertileEnd, 1))}`,
-        'SUMMARY:🌊 Fertile window (predicted)',
+        `SUMMARY:${T.fertile}`,
         'END:VEVENT',
         'BEGIN:VEVENT',
         `UID:daya-ovul-${p.ovulation}@daya`,
         `DTSTAMP:${stamp}`,
         `DTSTART;VALUE=DATE:${d8(p.ovulation)}`,
         `DTEND;VALUE=DATE:${d8(addDate(p.ovulation, 1))}`,
-        'SUMMARY:🌟 Estimated ovulation',
-        ...alarm('PT8H', 'Estimated ovulation today'),
+        `SUMMARY:${T.ovul}`,
+        ...alarm('PT8H', T.ovulAlarm),
         'END:VEVENT',
       )
     }

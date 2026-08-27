@@ -23,10 +23,13 @@ export function CycleWheel({
   cycles,
   today,
   center,
+  muted = false,
 }: {
   cycles: CycleInfo
   today: DateKey
   center: ReactNode
+  /** Hide forecast layers (fertile arc, ovulation dot) — for muted predictions. */
+  muted?: boolean
 }) {
   const [drawn, setDrawn] = useState(false)
   useEffect(() => {
@@ -92,13 +95,13 @@ export function CycleWheel({
         <circle cx={c} cy={c} r={r} fill="none" stroke="var(--card)" strokeOpacity="0.55" strokeWidth={stroke} />
         <circle cx={c} cy={c} r={r} fill="none" stroke="var(--line)" strokeWidth={stroke} />
         {ticks}
-        {fertileArc && (
+        {fertileArc && !muted && (
           <path d={fertileArc} fill="none" stroke="var(--teal)" strokeOpacity="0.85" strokeWidth={stroke} strokeLinecap="round" pathLength={1} style={drawStyle('0.25s')} />
         )}
         {periodArc && (
           <path d={periodArc} fill="none" stroke="url(#wheelRose)" strokeWidth={stroke} strokeLinecap="round" pathLength={1} style={drawStyle('0.05s')} />
         )}
-        {ovulPos && (
+        {ovulPos && !muted && (
           <g style={{ opacity: drawn ? 1 : 0, transition: 'opacity 0.4s ease 0.9s' }}>
             <circle cx={ovulPos.x} cy={ovulPos.y} r={7.5} fill="var(--gold)" stroke="var(--bg)" strokeWidth="2.5" />
           </g>

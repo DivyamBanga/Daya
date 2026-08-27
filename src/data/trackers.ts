@@ -1,4 +1,4 @@
-import type { FlowLevel, Mode } from '../types'
+import type { AppData, FlowLevel, Mode } from '../types'
 
 export interface TrackerOption {
   id: string
@@ -209,6 +209,35 @@ export function optionLabel(catId: string, optId: string): { label: string; emoj
   const opt = cat?.options.find((o) => o.id === optId)
   return opt ?? { label: optId, emoji: '•' }
 }
+
+/** Like optionLabel, but also resolves the user's own custom trackers. */
+export function optionLabelFor(
+  data: AppData,
+  catId: string,
+  optId: string,
+): { label: string; emoji: string } {
+  if (catId === 'custom') {
+    const t = data.settings.customTrackers.find((c) => c.id === optId)
+    if (t) return { label: t.label, emoji: t.emoji }
+  }
+  return optionLabel(catId, optId)
+}
+
+/** Categories where repeated taps cycle severity: mild → moderate → severe. */
+export const SEV_CATS = new Set(['symptoms', 'digestion', 'perisym', 'pregsym'])
+
+export const SEV_LABEL: Record<number, string> = { 1: 'mild', 2: 'moderate', 3: 'severe' }
+
+/** Pain-map regions (front-of-body zones + back). */
+export const PAIN_REGIONS: { id: string; label: string }[] = [
+  { id: 'pelvis-l', label: 'Left pelvis' },
+  { id: 'pelvis-c', label: 'Center pelvis / uterus' },
+  { id: 'pelvis-r', label: 'Right pelvis' },
+  { id: 'bladder', label: 'Bladder' },
+  { id: 'bowel', label: 'Bowel / rectal' },
+  { id: 'back', label: 'Lower back' },
+  { id: 'thighs', label: 'Thighs / legs' },
+]
 
 /** Fast quick-log picks shown on the Today screen. */
 export const QUICK_PICKS: { cat: string; id: string }[] = [

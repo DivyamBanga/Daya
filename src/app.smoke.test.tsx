@@ -89,6 +89,75 @@ describe('app smoke', () => {
     expect(el.textContent).toContain('Basal temperature')
   })
 
+  it('cycles symptom severity on repeated chip taps', async () => {
+    localStorage.setItem('daya.v1', JSON.stringify(SEED))
+    const el = await renderApp()
+    const logBtn = el.querySelector<HTMLButtonElement>('.logbtn')!
+    await act(async () => {
+      logBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const sheet = () => el.querySelector('.sheet')!
+    const crampsIn = () =>
+      [...sheet().querySelectorAll<HTMLButtonElement>('.chip')].find((c) => c.textContent?.includes('Cramps'))!
+    await act(async () => {
+      crampsIn().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(sheet().querySelector('.chip.s1')).toBeTruthy()
+    await act(async () => {
+      crampsIn().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(sheet().querySelector('.chip.s2')).toBeTruthy()
+    expect(el.textContent).toContain('Pain map')
+  })
+
+  it('shows the DRSP card and opens the daily record', async () => {
+    const seeded = structuredClone(SEED) as typeof SEED & { settings: Record<string, unknown> }
+    seeded.settings.drsp = true
+    localStorage.setItem('daya.v1', JSON.stringify(seeded))
+    const el = await renderApp()
+    expect(el.textContent).toContain('Daily record (DRSP)')
+    const card = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes('Daily record (DRSP)'),
+    )!
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(el.textContent).toContain('Mood')
+    expect(el.textContent).toContain('Felt angry or irritable')
+  })
+
+  it('mutes predictions and still shows hormones card when unmuted', async () => {
+    const muted = structuredClone(SEED) as typeof SEED & { settings: Record<string, unknown> }
+    muted.settings.mutePredictions = true
+    localStorage.setItem('daya.v1', JSON.stringify(muted))
+    const el = await renderApp()
+    expect(el.textContent).not.toContain('Next period ·')
+    expect(el.textContent).not.toContain('Your hormones')
+
+    localStorage.setItem('daya.v1', JSON.stringify(SEED))
+    vi.resetModules()
+    document.body.innerHTML = '<div id="root"></div>'
+    const el2 = await renderApp()
+    expect(el2.textContent).toContain('Your hormones')
+    expect(el2.textContent).toContain('phase plan')
+  })
+
+  it('decoy mode swaps to an empty app and back without touching disk', async () => {
+    localStorage.setItem('daya.v1', JSON.stringify(SEED))
+    const el = await renderApp()
+    const store = await import('./store')
+    expect(el.textContent).toContain('Cycle day')
+    await act(async () => {
+      store.enterDecoy()
+    })
+    expect(el.textContent).toContain('Log your first period')
+    await act(async () => {
+      store.exitDecoy()
+    })
+    expect(el.textContent).toContain('Cycle day')
+    expect(JSON.parse(localStorage.getItem('daya.v1')!).logs['2026-08-02'].flow).toBe('medium')
+  })
+
   it('renders pregnancy mode hero', async () => {
     const preg = structuredClone(SEED) as typeof SEED & { settings: Record<string, unknown> }
     preg.settings.mode = 'pregnancy'

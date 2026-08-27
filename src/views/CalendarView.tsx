@@ -68,13 +68,14 @@ export default function CalendarView() {
           ))}
           {cells.map((day) => {
             const info = cycles.dayInfo(day)
+            const muted = !!data.settings.mutePredictions
             const inMonth = day.slice(0, 7) === anchor.slice(0, 7)
             const cls = ['calday']
             if (!inMonth) cls.push('dim2')
             if (info.period) cls.push('period')
-            else if (info.predictedPeriod && day >= today) cls.push('predicted')
-            else if (info.fertile) cls.push('fertile')
-            if (info.ovulation && !info.period) cls.push('ovul')
+            else if (!muted && info.predictedPeriod && day >= today) cls.push('predicted')
+            else if (!muted && info.fertile) cls.push('fertile')
+            if (!muted && info.ovulation && !info.period) cls.push('ovul')
             if (day === today) cls.push('today')
             const logged = hasLogContent(data.logs[day])
             return (

@@ -1,5 +1,6 @@
 import type { AppData, DateKey } from '../types'
 import { addDays, diffDays } from './dates'
+import { computeCoverline } from './bbt'
 
 export interface PeriodEpisode {
   start: DateKey
@@ -25,6 +26,7 @@ export interface CyclePrediction {
 
 export type Phase = 'menstrual' | 'follicular' | 'fertile' | 'ovulation' | 'luteal' | 'none'
 export type Chance = 'low' | 'medium' | 'high' | 'peak'
+export type AnchorSource = 'bbt' | 'opk' | 'lh'
 
 export interface DayInfo {
   phase: Phase
@@ -47,6 +49,13 @@ export interface CycleInfo {
   irregular: boolean
   /** True once at least 2 completed cycles inform predictions. */
   calibrated: boolean
+  /** Luteal length actually used: learned from anchored cycles when possible. */
+  luteal: number
+  lutealLearned: boolean
+  /** How this cycle's ovulation was confirmed, if it was. */
+  ovulationConfirmed: AnchorSource | null
+  /** ± days of honest uncertainty to show on predicted dates (0 = show exact). */
+  rangeDays: number
   currentStart: DateKey | null
   cycleDay: number | null
   nextPeriod: DateKey | null
@@ -113,6 +122,67 @@ function robustAverage(values: number[], fallback: number): number {
   return Math.round(sum / wsum)
 }
 
+/**
+ * Find this cycle's confirmed ovulation from what the user actually logged,
+ * scanning days in [start, endExclusive). Priority: BBT temperature shift
+ * (retrospective confirmation) > positive OPK > LH line-darkness peak.
+ */
+function findAnchor(
+  logs: AppData['logs'],
+  start: DateKey,
+  endExclusive: DateKey,
+): { day: DateKey; source: AnchorSource } | null {
+  const len = Math.min(diffDays(start, endExclusive), 60)
+  if (len < 2) return null
+
+  // BBT shift — sustained rise begins the day after ovulation
+  const temps: number[] = []
+  for (let i = 0; i < len; i++) temps.push(logs[addDays(start, i)]?.bbt ?? NaN)
+  const cl = computeCoverline(temps)
+  if (cl) {
+    const ovu = addDays(start, cl.day - 2) // shift day is 1-based; ovulation ≈ day before the rise
+    if (ovu > start) return { day: ovu, source: 'bbt' }
+  }
+
+  // First positive OPK — ovulation typically ~1 day after the surge is detected
+  for (let i = 0; i < len; i++) {
+    const d = addDays(start, i)
+    if (logs[d]?.sel?.opk?.includes('positive')) {
+      return { day: addDays(d, 1), source: 'opk' }
+    }
+  }
+
+  // LH line-darkness peak (0–10): a clear peak ≥ 7 that falls afterwards
+  let peakDay: DateKey | null = null
+  let peakVal = 0
+  let sawDrop = false
+  for (let i = 0; i < len; i++) {
+    const d = addDays(start, i)
+    const v = logs[d]?.lh
+    if (v === undefined) continue
+    if (v > peakVal) {
+      peakVal = v
+      peakDay = d
+      sawDrop = false
+    } else if (peakDay && v < peakVal - 1) {
+      sawDrop = true
+    }
+  }
+  if (peakDay && peakVal >= 7 && sawDrop) return { day: addDays(peakDay, 1), source: 'lh' }
+
+  return null
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n))
+}
+
+function lastEpisodeFinished(episodes: PeriodEpisode[], today: DateKey): boolean {
+  if (!episodes.length) return false
+  const last = episodes[episodes.length - 1]
+  return diffDays(last.end, today) > EPISODE_GAP
+}
+
 export function computeCycles(data: AppData, today: DateKey): CycleInfo {
   const { settings } = data
   const episodes = findEpisodes(data.logs)
@@ -140,15 +210,52 @@ export function computeCycles(data: AppData, today: DateKey): CycleInfo {
   const variability = recentValid.length >= 2 ? Math.max(...recentValid) - Math.min(...recentValid) : 0
   const irregular = recentValid.length >= 3 && variability > 8
 
-  const luteal = settings.lutealLen
+  // Learn the user's real luteal length from cycles whose ovulation was confirmed
+  const historicalOvu = new Map<DateKey, DateKey>()
+  const lutealSamples: number[] = []
+  for (const c of completed.slice(-WINDOW)) {
+    if (c.length < MIN_CYCLE || c.length > 60) continue
+    const anchor = findAnchor(data.logs, c.start, c.nextStart)
+    if (anchor) {
+      const lut = diffDays(anchor.day, c.nextStart)
+      if (lut >= 7 && lut <= 20) {
+        lutealSamples.push(lut)
+        historicalOvu.set(c.start, anchor.day)
+      }
+    }
+  }
+  const lutealLearned = lutealSamples.length >= 2
+  const luteal = lutealLearned
+    ? clamp(robustAverage(lutealSamples, settings.lutealLen), 8, 18)
+    : settings.lutealLen
+
   const currentStart = episodes.length ? episodes[episodes.length - 1].start : null
   const cycleDay = currentStart ? diffDays(currentStart, today) + 1 : null
+
+  // Current cycle: an anchor (OPK positive, BBT shift, LH peak) overrides arithmetic
+  let currentAnchor: { day: DateKey; source: AnchorSource } | null = null
+  if (currentStart) {
+    currentAnchor = findAnchor(data.logs, currentStart, addDays(today, 1))
+    if (currentAnchor && diffDays(currentStart, currentAnchor.day) < 3) currentAnchor = null
+  }
+
+  let nextPeriod: DateKey | null = null
+  let ovulation: DateKey | null = null
+  if (currentStart) {
+    if (currentAnchor) {
+      ovulation = currentAnchor.day
+      nextPeriod = addDays(currentAnchor.day, luteal)
+    } else {
+      nextPeriod = addDays(currentStart, avgCycle)
+      ovulation = addDays(nextPeriod, -luteal)
+    }
+  }
 
   // Anchors: every real episode start plus predicted future starts, strictly increasing.
   const anchors: DateKey[] = episodes.map((e) => e.start)
   const predictions: CyclePrediction[] = []
-  if (currentStart) {
-    let s = addDays(currentStart, avgCycle)
+  if (currentStart && nextPeriod) {
+    let s = nextPeriod
     for (let i = 0; i < 12; i++) {
       anchors.push(s)
       predictions.push({
@@ -162,13 +269,13 @@ export function computeCycles(data: AppData, today: DateKey): CycleInfo {
     }
   }
 
-  const nextPeriod = currentStart ? addDays(currentStart, avgCycle) : null
   const daysToPeriod = nextPeriod ? diffDays(today, nextPeriod) : null
   const late = daysToPeriod !== null && daysToPeriod < 0 ? -daysToPeriod : 0
-  const ovulation = nextPeriod ? addDays(nextPeriod, -luteal) : null
   const fertileStart = ovulation ? addDays(ovulation, -5) : null
   const fertileEnd = ovulation ? addDays(ovulation, 1) : null
   const daysToOvulation = ovulation ? diffDays(today, ovulation) : null
+
+  const rangeDays = irregular && !currentAnchor ? clamp(Math.round(variability / 2), 2, 5) : 0
 
   const inEpisode = (key: DateKey) => episodes.find((e) => key >= e.start && key <= e.end)
 
@@ -189,8 +296,10 @@ export function computeCycles(data: AppData, today: DateKey): CycleInfo {
     let ovul = false
     let chance: Chance = 'low'
     if (anchor && nextAnchor && diffDays(anchor, nextAnchor) <= MAX_CYCLE) {
-      // Historical cycles use the real next start; the current/future ones use predictions.
-      const ovuDay = addDays(nextAnchor, -luteal)
+      // Confirmed ovulation (historical or current) beats arithmetic for phase math.
+      let ovuDay = historicalOvu.get(anchor) ?? null
+      if (!ovuDay && currentStart && anchor === currentStart && ovulation) ovuDay = ovulation
+      if (!ovuDay) ovuDay = addDays(nextAnchor, -luteal)
       const dist = diffDays(ovuDay, key)
       fertile = dist >= -5 && dist <= 1
       ovul = dist === 0
@@ -231,6 +340,10 @@ export function computeCycles(data: AppData, today: DateKey): CycleInfo {
     variability,
     irregular,
     calibrated: validLens.length >= 2,
+    luteal,
+    lutealLearned,
+    ovulationConfirmed: currentAnchor?.source ?? null,
+    rangeDays,
     currentStart,
     cycleDay: cycleDay !== null && cycleDay <= MAX_CYCLE ? cycleDay : null,
     nextPeriod,
@@ -247,16 +360,6 @@ export function computeCycles(data: AppData, today: DateKey): CycleInfo {
   }
 }
 
-function lastEpisodeFinished(episodes: PeriodEpisode[], today: DateKey): boolean {
-  if (!episodes.length) return false
-  const last = episodes[episodes.length - 1]
-  return diffDays(last.end, today) > EPISODE_GAP
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, n))
-}
-
 /** Pregnancy math: current week/day + trimester from a due date. */
 export function pregnancyProgress(due: DateKey, today: DateKey) {
   const conceptionStart = addDays(due, -280) // LMP-based week 0
@@ -271,4 +374,14 @@ export function pregnancyProgress(due: DateKey, today: DateKey) {
     daysLeft: Math.max(0, diffDays(today, due)),
     percent: clamp(Math.round((days / 280) * 100), 0, 100),
   }
+}
+
+/** Honest display of a predicted date: exact when confident, a range when not. */
+export function fmtPrediction(
+  key: DateKey,
+  rangeDays: number,
+  fmt: (k: DateKey) => string,
+): string {
+  if (rangeDays <= 0) return fmt(key)
+  return `${fmt(addDays(key, -rangeDays))} – ${fmt(addDays(key, rangeDays))}`
 }

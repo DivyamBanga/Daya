@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useApp } from '../store'
+import { enterDecoy, exitDecoy, useApp } from '../store'
 import { hashPin } from '../logic/pin'
 import { IconLock } from '../components/icons'
 
@@ -20,7 +20,12 @@ export default function PinLock({ onUnlock }: { onUnlock: () => void }) {
     const next = (entry + k).slice(0, 4)
     setEntry(next)
     if (next.length === 4) {
-      if ((await hashPin(next)) === settings.pinHash) {
+      const h = await hashPin(next)
+      if (h === settings.pinHash) {
+        exitDecoy()
+        onUnlock()
+      } else if (settings.decoyPinHash && h === settings.decoyPinHash) {
+        enterDecoy()
         onUnlock()
       } else {
         setWrong(true)

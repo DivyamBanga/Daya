@@ -1,9 +1,9 @@
 import type { AppData, DateKey } from '../types'
 import type { CycleInfo, Phase } from './cycles'
-import { addDays } from './dates'
+import { addDays, fmtShort } from './dates'
 import { DAILY_TIPS } from '../data/dailyTips'
 import { ARTICLES } from '../data/articles'
-import { optionLabel } from '../data/trackers'
+import { optionLabelFor } from '../data/trackers'
 
 export interface Insight {
   id: string
@@ -49,7 +49,7 @@ export interface SymptomPattern {
   total: number
 }
 
-const PATTERN_CATS = ['symptoms', 'mood', 'digestion', 'perisym']
+const PATTERN_CATS = ['symptoms', 'mood', 'digestion', 'perisym', 'custom']
 
 /** Cross-cycle recurrence: which logged items keep showing up in the same phase. */
 export function computePatterns(data: AppData, cycles: CycleInfo): SymptomPattern[] {
@@ -142,7 +142,9 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
     })
   }
 
-  if (cycles.late >= 3 && mode !== 'pregnancy') {
+  const muted = !!settings.mutePredictions
+
+  if (!muted && cycles.late >= 3 + cycles.rangeDays && mode !== 'pregnancy') {
     out.push({
       id: 'late',
       emoji: '⏳',
@@ -153,7 +155,23 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
     })
   }
 
-  if (!cycles.calibrated && cycles.currentStart && mode !== 'pregnancy') {
+  if (cycles.ovulationConfirmed && mode !== 'pregnancy' && cycles.nextPeriod) {
+    const how =
+      cycles.ovulationConfirmed === 'bbt'
+        ? 'your temperature shift'
+        : cycles.ovulationConfirmed === 'opk'
+          ? 'your positive ovulation test'
+          : 'your LH peak'
+    out.push({
+      id: 'anchored',
+      emoji: '🎯',
+      title: 'Ovulation confirmed',
+      body: `This cycle is anchored to ${how} instead of calendar math${muted ? '.' : ` — period expected around ${fmtShort(cycles.nextPeriod)}.`}${cycles.lutealLearned ? ` Daya has learned your luteal phase runs about ${cycles.luteal} days.` : ''}`,
+      tone: 'teal',
+    })
+  }
+
+  if (!muted && !cycles.calibrated && cycles.currentStart && mode !== 'pregnancy') {
     out.push({
       id: 'calibrating',
       emoji: '🎯',
@@ -165,7 +183,7 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
   }
 
   const group = PHASE_GROUP[cycles.phase]
-  if (group && mode !== 'pregnancy') {
+  if (group && mode !== 'pregnancy' && (!muted || cycles.ovulationConfirmed || group === 'menstrual')) {
     const pc = PHASE_CARDS[group]
     out.push({
       id: `phase-${group}`,
@@ -177,7 +195,7 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
     })
   }
 
-  if (mode === 'ttc' && cycles.daysToOvulation !== null) {
+  if (!muted && mode === 'ttc' && cycles.daysToOvulation !== null) {
     const d = cycles.daysToOvulation
     out.push({
       id: 'ttc',
@@ -216,7 +234,7 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
     })
   }
 
-  if (group === 'luteal' && cycles.daysToPeriod !== null && cycles.daysToPeriod <= 5 && cycles.daysToPeriod > 0) {
+  if (!muted && group === 'luteal' && cycles.daysToPeriod !== null && cycles.daysToPeriod <= 5 && cycles.daysToPeriod > 0) {
     out.push({
       id: 'pms',
       emoji: '🫶',
@@ -229,7 +247,7 @@ export function dailyInsights(data: AppData, cycles: CycleInfo, today: DateKey):
 
   const patterns = computePatterns(data, cycles)
   for (const p of patterns.slice(0, 2)) {
-    const o = optionLabel(p.cat, p.opt)
+    const o = optionLabelFor(data, p.cat, p.opt)
     out.push({
       id: `pattern-${p.cat}-${p.opt}`,
       emoji: o.emoji,

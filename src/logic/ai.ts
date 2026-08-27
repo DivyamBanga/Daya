@@ -4,7 +4,7 @@ import type { CycleInfo } from './cycles'
 import { pregnancyProgress } from './cycles'
 import { fmtLong, fmtShort } from './dates'
 import { computePatterns, periScore } from './insights'
-import { optionLabel } from '../data/trackers'
+import { optionLabelFor } from '../data/trackers'
 
 const MODE_LABEL = {
   cycle: 'tracking her cycle',
@@ -41,14 +41,14 @@ function buildContext(data: AppData, cycles: CycleInfo, today: DateKey): string 
   for (const day of recent) {
     const sel = data.logs[day].sel
     if (!sel) continue
-    const items = Object.entries(sel).flatMap(([cat, opts]) => opts.map((o) => optionLabel(cat, o).label))
+    const items = Object.entries(sel).flatMap(([cat, opts]) => opts.map((o) => optionLabelFor(data, cat, o).label))
     if (items.length) symptomNotes.push(`${fmtShort(day)}: ${items.slice(0, 8).join(', ')}`)
   }
   if (symptomNotes.length) lines.push(`Recent logs — ${symptomNotes.join(' · ')}`)
 
   const patterns = computePatterns(data, cycles).slice(0, 3)
   for (const p of patterns) {
-    lines.push(`Pattern: ${optionLabel(p.cat, p.opt).label} recurs in the ${p.phase} phase (${p.hits}/${p.total} cycles).`)
+    lines.push(`Pattern: ${optionLabelFor(data, p.cat, p.opt).label} recurs in the ${p.phase} phase (${p.hits}/${p.total} cycles).`)
   }
   if (settings.mode === 'peri') {
     const s = periScore(data, today)

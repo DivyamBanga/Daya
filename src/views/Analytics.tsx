@@ -5,54 +5,51 @@ import { Panel, Seg, SectionLabel } from '../components/ui'
 import { Bars, BBTChart, HBars, TrendLine } from '../components/charts'
 import { addDays, diffDays, fmtLong, fmtShort } from '../logic/dates'
 import { computePatterns } from '../logic/insights'
+import { computeCoverline } from '../logic/bbt'
 import { cToF, fmtWeight, kgToLb } from '../logic/units'
-import { optionLabel } from '../data/trackers'
+import { optionLabelFor, PAIN_REGIONS } from '../data/trackers'
+import { HormoneCurves } from '../components/HormoneCurves'
 import type { AppData, DateKey } from '../types'
 
 /* ── shared data helpers ─────────────────────────────────── */
 
 function countSelections(data: AppData, from: DateKey, to: DateKey, cats: string[]) {
-  const counts = new Map<string, number>()
+  const counts = new Map<string, { n: number; sevSum: number }>()
   for (let d = from; d <= to; d = addDays(d, 1)) {
-    const sel = data.logs[d]?.sel
+    const log = data.logs[d]
+    const sel = log?.sel
     if (!sel) continue
     for (const cat of cats) {
       for (const opt of sel[cat] ?? []) {
         if (opt === 'fine') continue
         const key = `${cat}|${opt}`
-        counts.set(key, (counts.get(key) ?? 0) + 1)
+        const e = counts.get(key) ?? { n: 0, sevSum: 0 }
+        e.n++
+        e.sevSum += log.sev?.[`${cat}:${opt}`] ?? 1
+        counts.set(key, e)
       }
     }
   }
   return [...counts.entries()]
-    .map(([key, value]) => {
+    .map(([key, e]) => {
       const [cat, opt] = key.split('|')
-      const o = optionLabel(cat, opt)
-      return { label: o.label, emoji: o.emoji, value }
+      const o = optionLabelFor(data, cat, opt)
+      return { label: o.label, emoji: o.emoji, value: e.n, sevAvg: e.sevSum / e.n }
     })
     .sort((a, b) => b.value - a.value)
 }
 
-/** Fertility-awareness style coverline: 3 temps above the previous 6. */
-function computeCoverline(temps: number[]): { cover: number; day: number } | null {
-  for (let i = 6; i < temps.length - 2; i++) {
-    const prev = temps.slice(Math.max(0, i - 6), i).filter((t) => !isNaN(t))
-    if (prev.length < 4) continue
-    const m = Math.max(...prev)
-    if (![temps[i], temps[i + 1], temps[i + 2]].some(isNaN) && temps[i] > m && temps[i + 1] > m && temps[i + 2] > m) {
-      return { cover: Math.round((m + 0.05) * 100) / 100, day: i + 1 }
-    }
-  }
-  return null
-}
 
 /* ── Charts & trends ─────────────────────────────────────── */
 
-export function ChartsView() {
+type ChartTab = 'cycle' | 'body' | 'fertility' | 'hormones'
+
+export function ChartsView({ initialTab }: { initialTab?: ChartTab }) {
   const data = useApp()
   const cycles = useCycles()
   const today = useToday()
-  const [tab, setTab] = useState<'cycle' | 'body' | 'bbt'>('cycle')
+  const [tab, setTab] = useState<ChartTab>(initialTab ?? 'cycle')
+  const [compare, setCompare] = useState(false)
   const { settings } = data
 
   const completed = cycles.completed.slice(-12)
@@ -68,7 +65,7 @@ export function ChartsView() {
       weights,
       sleep: days14.map((d) => ({ label: fmtShort(d), value: data.logs[d]?.sleep ?? 0 })),
       water: days14.map((d) => ({ label: fmtShort(d), value: data.logs[d]?.water ?? 0 })),
-      symptoms: countSelections(data, addDays(today, -89), today, ['symptoms', 'digestion', 'perisym', 'pregsym']).slice(0, 8),
+      symptoms: countSelections(data, addDays(today, -89), today, ['symptoms', 'digestion', 'perisym', 'pregsym', 'custom']).slice(0, 8),
     }
   }, [data, today, settings.weightUnit])
 
@@ -76,17 +73,38 @@ export function ChartsView() {
     if (!cycles.currentStart) return null
     const days = diffDays(cycles.currentStart, today) + 1
     if (days < 1 || days > 60) return null
+    const conv = (t: number) => (settings.tempUnit === 'c' ? t : Math.round(cToF(t) * 100) / 100)
     const tempsC: number[] = []
     const points: { day: number; value: number }[] = []
     for (let i = 0; i < days; i++) {
       const t = data.logs[addDays(cycles.currentStart, i)]?.bbt
       tempsC.push(t ?? NaN)
-      points.push({ day: i + 1, value: t === undefined ? NaN : settings.tempUnit === 'c' ? t : Math.round(cToF(t) * 100) / 100 })
+      points.push({ day: i + 1, value: t === undefined ? NaN : conv(t) })
     }
     const cl = computeCoverline(tempsC)
+    // Previous cycle overlay
+    let prev: { day: number; value: number }[] | undefined
+    if (cycles.episodes.length >= 2) {
+      const p0 = cycles.episodes[cycles.episodes.length - 2].start
+      const pLen = Math.min(diffDays(p0, cycles.currentStart), 60)
+      const pts: { day: number; value: number }[] = []
+      for (let i = 0; i < pLen; i++) {
+        const t = data.logs[addDays(p0, i)]?.bbt
+        pts.push({ day: i + 1, value: t === undefined ? NaN : conv(t) })
+      }
+      if (pts.some((p) => !isNaN(p.value))) prev = pts
+    }
+    // LH line-darkness curve
+    const lhPoints: { label: string; value: number }[] = []
+    for (let i = 0; i < days; i++) {
+      const v = data.logs[addDays(cycles.currentStart, i)]?.lh
+      if (v !== undefined) lhPoints.push({ label: `d${i + 1}`, value: v })
+    }
     return {
       points,
-      cover: cl ? (settings.tempUnit === 'c' ? cl.cover : Math.round(cToF(cl.cover) * 100) / 100) : undefined,
+      prev,
+      lhPoints,
+      cover: cl ? conv(cl.cover) : undefined,
       periodThrough: Math.min(cycles.episodes[cycles.episodes.length - 1]?.length ?? 0, days),
       ovulationDay: cycles.ovulation ? diffDays(cycles.currentStart, cycles.ovulation) + 1 : undefined,
     }
@@ -96,9 +114,10 @@ export function ChartsView() {
     <Panel title="Charts & trends">
       <Seg
         options={[
-          { id: 'cycle', label: 'Cycle' },
-          { id: 'body', label: 'Body' },
-          { id: 'bbt', label: 'BBT' },
+          { id: 'cycle' as ChartTab, label: 'Cycle' },
+          { id: 'body' as ChartTab, label: 'Body' },
+          { id: 'fertility' as ChartTab, label: 'Fertility' },
+          { id: 'hormones' as ChartTab, label: 'Hormones' },
         ]}
         value={tab}
         onChange={setTab}
@@ -156,13 +175,22 @@ export function ChartsView() {
         </>
       )}
 
-      {tab === 'bbt' && (
+      {tab === 'fertility' && (
         <>
-          <SectionLabel>Basal temperature · current cycle</SectionLabel>
+          <div className="flex" style={{ marginTop: 16 }}>
+            <SectionLabel>Basal temperature · current cycle</SectionLabel>
+            <span className="grow" />
+            {bbt?.prev && (
+              <button className={`chip${compare ? ' on' : ''}`} onClick={() => setCompare(!compare)}>
+                Overlay last cycle
+              </button>
+            )}
+          </div>
           <div className="card">
             {bbt ? (
               <BBTChart
                 data={bbt.points}
+                prevData={compare ? bbt.prev : undefined}
                 coverline={bbt.cover}
                 periodThrough={bbt.periodThrough}
                 ovulationDay={bbt.ovulationDay}
@@ -172,10 +200,60 @@ export function ChartsView() {
               <p className="notice">Log your period first so cycle days can anchor the chart.</p>
             )}
           </div>
+          <SectionLabel>LH test line darkness · current cycle</SectionLabel>
+          <div className="card">
+            {bbt && bbt.lhPoints.length >= 2 ? (
+              <TrendLine data={bbt.lhPoints} color="var(--ch-amber)" fmt={(v) => `${v}`} />
+            ) : (
+              <p className="notice">
+                Log the line darkness of your ovulation tests (0–10 in the daily log) and the surge
+                curve appears here — a rise-then-fall peak pinpoints ovulation.
+              </p>
+            )}
+          </div>
+          {cycles.ovulationConfirmed && (
+            <p className="notice" style={{ marginTop: 12 }}>
+              🎯 This cycle’s ovulation is anchored to{' '}
+              {cycles.ovulationConfirmed === 'bbt'
+                ? 'your temperature shift'
+                : cycles.ovulationConfirmed === 'opk'
+                  ? 'your positive test'
+                  : 'your LH peak'}
+              {cycles.lutealLearned ? ` — and Daya has learned your luteal phase is ~${cycles.luteal} days.` : '.'}
+            </p>
+          )}
           <p className="notice" style={{ marginTop: 12 }}>
             A sustained rise of ~0.2–0.5 °C that stays above the coverline for 3+ days usually means
             ovulation already happened. BBT confirms ovulation in hindsight — it can’t predict it ahead
             of time.
+          </p>
+        </>
+      )}
+
+      {tab === 'hormones' && (
+        <>
+          <SectionLabel>Your cycle’s hormone story</SectionLabel>
+          <div className="card">
+            {cycles.currentStart && cycles.ovulation ? (
+              <HormoneCurves
+                cycleLen={Math.max(cycles.avgCycle, cycles.cycleDay ?? 0)}
+                ovulationDay={diffDays(cycles.currentStart, cycles.ovulation) + 1}
+                today={cycles.cycleDay}
+                periodLen={cycles.avgPeriod}
+              />
+            ) : (
+              <p className="notice">Log a period so the curves can align to your cycle.</p>
+            )}
+          </div>
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="rows">
+              <KV k="🌹 Estrogen" v="Builds your uterine lining and lifts energy, mood and skin as it climbs to its pre-ovulation peak." />
+              <KV k="🌙 Progesterone" v="Takes over after ovulation — warms your body, calms, and can slow digestion. Its fall triggers your period." />
+              <KV k="⚡ LH" v="Spikes for ~24–36 hours to release the egg. This surge is what ovulation test strips detect." />
+            </div>
+          </div>
+          <p className="disclaimer" style={{ marginTop: 12 }}>
+            Schematic textbook curves timed to your cycle — not measured hormone levels.
           </p>
         </>
       )}
@@ -252,8 +330,19 @@ export function ReportView() {
   const today = useToday()
   const { settings } = data
 
-  const symptoms90 = countSelections(data, addDays(today, -89), today, ['symptoms', 'digestion', 'perisym', 'pregsym']).slice(0, 10)
+  const symptoms90 = countSelections(data, addDays(today, -89), today, ['symptoms', 'digestion', 'perisym', 'pregsym', 'custom']).slice(0, 10)
   const patterns = computePatterns(data, cycles).slice(0, 5)
+  const anySev = symptoms90.some((s) => s.sevAvg > 1.01)
+
+  const painDays: { day: DateKey; text: string }[] = []
+  for (let d = addDays(today, -89); d <= today; d = addDays(d, 1)) {
+    const pain = data.logs[d]?.pain
+    if (!pain || !Object.keys(pain).length) continue
+    const text = Object.entries(pain)
+      .map(([r, lvl]) => `${PAIN_REGIONS.find((p) => p.id === r)?.label ?? r} ${'●'.repeat(lvl)}`)
+      .join(', ')
+    painDays.push({ day: d, text })
+  }
 
   const last30 = Array.from({ length: 30 }, (_, i) => addDays(today, i - 29))
   const sleepVals = last30.map((d) => data.logs[d]?.sleep).filter((v): v is number => v !== undefined)
@@ -285,7 +374,17 @@ export function ReportView() {
           <KV k="Cycle variability (recent)" v={`${cycles.variability} days`} />
           <KV k="Cycles recorded" v={`${cycles.completed.length}`} />
           <KV k="Regularity" v={cycles.irregular ? 'Irregular (recent spread > 8 days)' : 'Within typical variation'} />
-          {cycles.nextPeriod && <KV k="Next period (predicted)" v={fmtLong(cycles.nextPeriod)} />}
+          <KV
+            k="Luteal phase"
+            v={`${cycles.luteal} days ${cycles.lutealLearned ? '(learned from OPK/BBT data)' : '(standard assumption)'}`}
+          />
+          {cycles.ovulationConfirmed && (
+            <KV
+              k="Ovulation this cycle"
+              v={`Confirmed by ${cycles.ovulationConfirmed === 'bbt' ? 'temperature shift' : cycles.ovulationConfirmed === 'opk' ? 'positive OPK' : 'LH peak'}`}
+            />
+          )}
+          {cycles.nextPeriod && !settings.mutePredictions && <KV k="Next period (predicted)" v={fmtLong(cycles.nextPeriod)} />}
         </div>
       </div>
 
@@ -304,17 +403,44 @@ export function ReportView() {
         {symptoms90.length === 0 && <p className="notice">No symptoms logged in the last 90 days.</p>}
         <div className="rows">
           {symptoms90.map((s) => (
-            <KV key={s.label} k={`${s.emoji} ${s.label}`} v={`${s.value}×`} />
+            <KV
+              key={s.label}
+              k={`${s.emoji} ${s.label}`}
+              v={`${s.value}×${anySev ? ` · avg severity ${s.sevAvg.toFixed(1)}/3` : ''}`}
+            />
           ))}
         </div>
       </div>
+
+      {painDays.length > 0 && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <SectionLabel>Pain diary · 90 days ({painDays.length} days with pain)</SectionLabel>
+          <div className="rows">
+            {painDays.slice(-14).reverse().map((p) => (
+              <KV key={p.day} k={fmtLong(p.day)} v={p.text} />
+            ))}
+          </div>
+          {painDays.length > 14 && (
+            <p className="meta" style={{ marginTop: 8 }}>
+              Showing the 14 most recent of {painDays.length} pain days.
+            </p>
+          )}
+        </div>
+      )}
+
+      {settings.drsp && (
+        <p className="notice" style={{ marginTop: 12 }}>
+          🌗 A PMDD daily record (DRSP) is being kept — print its two-cycle severity chart from the
+          Daily record screen for the full diagnostic picture.
+        </p>
+      )}
 
       {patterns.length > 0 && (
         <div className="card" style={{ marginTop: 12 }}>
           <SectionLabel>Recurring patterns</SectionLabel>
           <div className="rows">
             {patterns.map((p) => {
-              const o = optionLabel(p.cat, p.opt)
+              const o = optionLabelFor(data, p.cat, p.opt)
               return (
                 <KV
                   key={`${p.cat}-${p.opt}-${p.phase}`}

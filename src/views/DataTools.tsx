@@ -300,6 +300,18 @@ export function RemindersView() {
           <Row icon="🩸" title="Period eve" sub="The evening before" right={<Switch on={r.periodStart} onToggle={() => toggle('periodStart')} />} chev={false} />
           <Row icon="🌟" title="Fertile & ovulation" sub="Window + estimated day" right={<Switch on={r.ovulation} onToggle={() => toggle('ovulation')} />} chev={false} />
           <Row icon="💊" title="Pill & meds" sub="Daily at each medication’s time" right={<Switch on={r.pill} onToggle={() => toggle('pill')} />} chev={false} />
+          <Row
+            icon="🕶️"
+            title="Discreet wording"
+            sub="Neutral event titles — “Self-care days”, no 🌹, no “period”"
+            right={
+              <Switch
+                on={!!data.settings.discreetExport}
+                onToggle={() => patchSettings({ discreetExport: !data.settings.discreetExport })}
+              />
+            }
+            chev={false}
+          />
         </div>
       </div>
 

@@ -20,6 +20,10 @@ export default function More() {
   const [pin1, setPin1] = useState('')
   const [pin2, setPin2] = useState('')
   const [pinOpen, setPinOpen] = useState(false)
+  const [dec1, setDec1] = useState('')
+  const [dec2, setDec2] = useState('')
+  const [decOpen, setDecOpen] = useState(false)
+  const [decErr, setDecErr] = useState('')
   const [keyOpen, setKeyOpen] = useState(false)
   const [keyDraft, setKeyDraft] = useState('')
 
@@ -99,8 +103,20 @@ export default function More() {
           <Row
             icon="🌙"
             title="Luteal phase"
-            sub="Days from ovulation to period (usually 14)"
+            sub="Days from ovulation to period — auto-learned once you log OPKs or BBT"
             right={<Stepper value={settings.lutealLen} min={9} max={17} onChange={(v) => patchSettings({ lutealLen: v })} />}
+            chev={false}
+          />
+          <Row
+            icon="🔮"
+            title="Mute predictions"
+            sub="Hide countdowns & fertile forecasts — calmer for irregular cycles / PCOS"
+            right={
+              <Switch
+                on={!!settings.mutePredictions}
+                onToggle={() => patchSettings({ mutePredictions: !settings.mutePredictions })}
+              />
+            }
             chev={false}
           />
         </div>
@@ -171,6 +187,17 @@ export default function More() {
           <Row icon="💊" title="Medication" sub={settings.meds.length ? `${settings.meds.length} tracked` : 'The pill, supplements, HRT…'} onClick={() => nav.push({ kind: 'meds' })} />
           <Row icon="🗂️" title="Data & import" sub="Flo import, backup, export, erase" onClick={() => nav.push({ kind: 'data' })} />
           <Row icon="📄" title="Health report" sub="A summary to show your clinician" onClick={() => nav.push({ kind: 'report' })} />
+          <Row icon="⭐" title="Your trackers" sub={settings.customTrackers.length ? `${settings.customTrackers.length} custom` : 'Track anything — meds, triggers, flares'} onClick={() => nav.push({ kind: 'custom' })} />
+          <Row
+            icon="🌗"
+            title="PMDD daily record (DRSP)"
+            sub={settings.drsp ? 'On — shows on Today' : 'The clinical standard for diagnosing PMDD'}
+            right={<Switch on={!!settings.drsp} onToggle={() => patchSettings({ drsp: !settings.drsp })} />}
+            chev={false}
+          />
+          {settings.drsp && (
+            <Row icon="📝" title="Open today’s record" onClick={() => nav.push({ kind: 'drsp' })} />
+          )}
         </div>
       </div>
 
@@ -232,6 +259,85 @@ export default function More() {
             </div>
             <p className="meta" style={{ marginTop: 8 }}>
               Forgotten PINs can’t be recovered — you’d need to erase the app’s data.
+            </p>
+          </div>
+        )}
+        {settings.pinHash && (
+          <div className="rows">
+            <Row
+              icon="🎭"
+              title="Decoy PIN"
+              sub={
+                settings.decoyPinHash
+                  ? 'On — that PIN opens a fresh, empty-looking app'
+                  : 'A second PIN that opens an empty app if you’re ever made to unlock'
+              }
+              right={
+                settings.decoyPinHash ? (
+                  <button
+                    className="meta"
+                    style={{ color: 'var(--rose-deep)', fontWeight: 700 }}
+                    onClick={() => patchSettings({ decoyPinHash: undefined })}
+                  >
+                    Remove
+                  </button>
+                ) : undefined
+              }
+              onClick={settings.decoyPinHash ? undefined : () => setDecOpen(!decOpen)}
+              chev={!settings.decoyPinHash}
+            />
+          </div>
+        )}
+        {decOpen && settings.pinHash && !settings.decoyPinHash && (
+          <div style={{ marginTop: 8 }}>
+            <div className="flex" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <input
+                className="input"
+                style={{ maxWidth: 130 }}
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="Decoy PIN"
+                value={dec1}
+                onChange={(e) => setDec1(e.target.value.replace(/\D/g, ''))}
+              />
+              <input
+                className="input"
+                style={{ maxWidth: 130 }}
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="Repeat"
+                value={dec2}
+                onChange={(e) => setDec2(e.target.value.replace(/\D/g, ''))}
+              />
+              <button
+                className="btn small"
+                disabled={dec1.length !== 4 || dec1 !== dec2}
+                onClick={async () => {
+                  const h = await hashPin(dec1)
+                  if (h === settings.pinHash) {
+                    setDecErr('The decoy must be different from your real PIN.')
+                    return
+                  }
+                  patchSettings({ decoyPinHash: h })
+                  setDec1('')
+                  setDec2('')
+                  setDecOpen(false)
+                  setDecErr('')
+                }}
+              >
+                Set decoy
+              </button>
+            </div>
+            {decErr && (
+              <p className="meta" style={{ marginTop: 6, color: 'var(--rose-deep)' }}>
+                {decErr}
+              </p>
+            )}
+            <p className="meta" style={{ marginTop: 6 }}>
+              Entering the decoy PIN shows an empty app; nothing done there is saved, and your real
+              data stays untouched.
             </p>
           </div>
         )}

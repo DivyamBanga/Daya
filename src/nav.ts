@@ -9,7 +9,7 @@ export type Overlay =
   | { kind: 'article'; id: string }
   | { kind: 'library'; topic?: TopicId }
   | { kind: 'assistant' }
-  | { kind: 'charts' }
+  | { kind: 'charts'; tab?: 'cycle' | 'body' | 'fertility' | 'hormones' }
   | { kind: 'report' }
   | { kind: 'cycles' }
   | { kind: 'checker' }
@@ -19,6 +19,8 @@ export type Overlay =
   | { kind: 'kicks' }
   | { kind: 'contractions' }
   | { kind: 'meds' }
+  | { kind: 'custom' }
+  | { kind: 'drsp' }
 
 export interface Nav {
   tab: Tab

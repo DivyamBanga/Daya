@@ -10,6 +10,14 @@ export interface DayLog {
   flow?: FlowLevel
   /** Chip selections: tracker category id -> selected option ids. */
   sel?: Record<string, string[]>
+  /** Symptom severity per selected chip: "cat:opt" -> 1 (mild) | 2 (moderate) | 3 (severe). */
+  sev?: Record<string, number>
+  /** Pain map: body region id -> 1..3. */
+  pain?: Record<string, number>
+  /** DRSP daily record (PMDD): item id -> 1..6. */
+  drsp?: Record<string, number>
+  /** LH (ovulation) test line darkness 0–10. */
+  lh?: number
   /** Glasses of water. */
   water?: number
   /** Weight in kg (canonical; converted for display). */
@@ -49,6 +57,12 @@ export interface PregnancyState {
   started: DateKey
 }
 
+export interface CustomTracker {
+  id: string
+  label: string
+  emoji: string
+}
+
 export interface Settings {
   mode: Mode
   name?: string
@@ -64,8 +78,17 @@ export interface Settings {
   waterGoal: number
   /** SHA-256 hex of the 4-digit PIN, if lock is enabled. */
   pinHash?: string
+  /** Optional second PIN that opens a fresh-looking empty app (coercion protection). */
+  decoyPinHash?: string
   /** Anthropic API key for the optional AI assistant (device-only). */
   aiKey?: string
+  /** Hide all future predictions (period countdowns, fertile window) — for irregular cycles. */
+  mutePredictions?: boolean
+  /** PMDD daily record (DRSP) enabled. */
+  drsp?: boolean
+  /** Use neutral wording in exported calendar events. */
+  discreetExport?: boolean
+  customTrackers: CustomTracker[]
   reminders: ReminderPrefs
   meds: MedDef[]
   pregnancy?: PregnancyState
@@ -96,6 +119,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tempUnit: 'c',
   theme: 'auto',
   waterGoal: 8,
+  customTrackers: [],
   reminders: { periodBefore: true, periodStart: true, ovulation: true, pill: true, water: false },
   meds: [],
   onboarded: false,

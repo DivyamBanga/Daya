@@ -16,6 +16,7 @@ export function normalize(d: Partial<AppData> | null | undefined): AppData {
       ...(d.settings ?? {}),
       reminders: { ...base.settings.reminders, ...(d.settings?.reminders ?? {}) },
       meds: d.settings?.meds ?? [],
+      customTrackers: d.settings?.customTrackers ?? [],
     },
     logs: d.logs ?? {},
     chat: d.chat ?? [],
@@ -36,8 +37,11 @@ function load(): AppData {
 let data: AppData = load()
 const subs = new Set<() => void>()
 let saveTimer: number | undefined
+/** While true, the app shows a fresh-looking empty dataset and nothing is persisted. */
+let decoyActive = false
 
 function persist() {
+  if (decoyActive) return
   clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
     try {
@@ -46,6 +50,23 @@ function persist() {
       // storage full/unavailable — data stays in memory; export still works
     }
   }, 250)
+}
+
+/** Decoy PIN entered: swap in an in-memory empty app; real data stays untouched on disk. */
+export function enterDecoy() {
+  decoyActive = true
+  const d = structuredClone(EMPTY_DATA)
+  d.settings.onboarded = true
+  data = d
+  subs.forEach((s) => s())
+}
+
+/** Real PIN entered: make sure the on-disk data is what's shown. */
+export function exitDecoy() {
+  if (!decoyActive) return
+  decoyActive = false
+  data = load()
+  subs.forEach((s) => s())
 }
 
 export function getData(): AppData {
@@ -93,7 +114,7 @@ export function patchLog(key: DateKey, patch: Partial<DayLog>) {
         v === null ||
         v === '' ||
         (Array.isArray(v) && v.length === 0) ||
-        (k === 'sel' && typeof v === 'object' && Object.keys(v).length === 0)
+        (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0)
       ) {
         delete next[k]
       }
@@ -101,6 +122,44 @@ export function patchLog(key: DateKey, patch: Partial<DayLog>) {
     if (Object.keys(next).length === 0) delete d.logs[key]
     else d.logs[key] = next
   })
+}
+
+/** Severity categories cycle off → mild → moderate → severe → off on repeated taps. */
+export function cycleSev(key: DateKey, cat: string, opt: string) {
+  const log = data.logs[key]
+  const sevKey = `${cat}:${opt}`
+  const selected = log?.sel?.[cat]?.includes(opt) ?? false
+  const cur = log?.sev?.[sevKey] ?? (selected ? 1 : 0)
+  const sel = { ...(log?.sel ?? {}) }
+  const sev = { ...(log?.sev ?? {}) }
+  if (!selected) {
+    sel[cat] = [...(sel[cat] ?? []), opt]
+    sev[sevKey] = 1
+  } else if (cur < 3) {
+    sev[sevKey] = cur + 1
+  } else {
+    sel[cat] = (sel[cat] ?? []).filter((o) => o !== opt)
+    if (sel[cat].length === 0) delete sel[cat]
+    delete sev[sevKey]
+  }
+  patchLog(key, { sel, sev })
+}
+
+/** Pain-map regions cycle 0 → 1 → 2 → 3 → 0. */
+export function cyclePain(key: DateKey, region: string) {
+  const pain = { ...(data.logs[key]?.pain ?? {}) }
+  const cur = pain[region] ?? 0
+  if (cur >= 3) delete pain[region]
+  else pain[region] = cur + 1
+  patchLog(key, { pain })
+}
+
+/** Set one DRSP item (1–6); tapping the same value clears it. */
+export function setDrsp(key: DateKey, item: string, value: number) {
+  const drsp = { ...(data.logs[key]?.drsp ?? {}) }
+  if (drsp[item] === value) delete drsp[item]
+  else drsp[item] = value
+  patchLog(key, { drsp })
 }
 
 /** Toggle a chip selection for a day. `single` categories replace instead of accumulate. */
